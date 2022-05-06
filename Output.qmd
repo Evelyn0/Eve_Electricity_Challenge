@@ -1,0 +1,407 @@
+---
+title: "Trying to measure the Marginal Carbon Emissions"
+format: pdf
+execute:
+  echo: false
+  warning: false
+bibliography: references.bib
+---
+
+```{r, Libraries}
+
+#| echo: false
+#| include: false
+#| warning: false
+
+library(data.table)
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(rmarkdown)
+```
+
+```{r, Functions}
+
+#| echo: false
+#| include: false
+
+Harmonize<-function(time_starts, time_ends, freq_time, n_countries, list){
+  rbindlist(list, #Step 1: Bind all list into a only one DF
+            use.names = TRUE, idcol = "List_countries_15min")%>%
+    mutate(across(c(3:24), function(x) as.numeric(as.character(x))), #Step 2: All generation vars are converted from character to numeric
+           MTU= rep(seq(ymd_hms(time_starts), ymd_hms(time_ends), by=freq_time), n_countries),
+           Day= as.Date(MTU),
+           Hour=hour(MTU)
+             )%>%
+         group_by(Area,Day, Hour)%>%
+  select(-c(1,2))%>%
+  summarise(across(where(is.numeric), sum, na.rm=T)) #Estimate a variable by hour
+}
+
+SumCols<-function(df, pattern){
+  rowSums(
+    select(df, starts_with(pattern)), na.rm = T
+  )
+}
+
+Delta_function<-function(vec){
+  vec-lag(vec)
+  }
+
+```
+
+```{r, Data}
+
+#| echo: false
+#| include: false
+
+temp_Gen <- list.files(path = "~/Electricity_Challenge/GENERATION", recursive = TRUE,
+                                    pattern = "\\.csv$", 
+                                    full.names = TRUE)
+
+temp_Load <- list.files(path = "~/Electricity_Challenge/LOAD", recursive = TRUE,
+                                    pattern = "\\.csv$", 
+                                    full.names = TRUE)
+
+```
+
+```{r, IPCC}
+
+IPCC<-tibble(Technology=c( "Coal", "Gas", "Biomass", "Geothermal", "Hydropower", "Nuclear", "Solar", "Wind", "Oil", "Ave_Ren"),
+             #"Emission_Factor(gCO2eq/kWh)"=c(820, 490, 230, 38, 24, 12, 45, 11),
+             "Emission_Factor(tCO2eq/MWh)"=c(0.820, 0.490, 0.230, 0.038, 0.024, 0.012, 0.045, 0.011, 0.650, 0.027))
+
+IPCC<-IPCC%>%pivot_wider(names_from = Technology, values_from = c(`Emission_Factor(tCO2eq/MWh)`))
+```
+
+
+[//]: # "SEEMING TRUTH"
+
+One of the greatest environmental challenges is to achieve a low-carbon economy. By 2050, it is necessary to get the zero emissions for preventing the worst effects of climate changes.
+Depending on the economic sector, the decarbonization process faces different problems. 
+However, a problem faced by all sector is related to **how to measure the marginal carbon emissions?**. 
+Those emissions represent the change in the carbon emissions that comes from making or producing an additional good.
+We can apply this concept in the electricity sector and define the marginal carbon emission as the variation in $CO_2$ emissions in the electricity network in response to a change in the electricity demand. 
+
+[//]: # "SEEMING TRUTH DETAILS"
+
+The electricity sector is responsible for the $27\%$ of all greenhouse gas emissions. 
+The impact of this sector in economy is important because in the last years economies are becoming less energy intensive and more electricity intensive.
+This constant increase in electricity demand directly affects the electrical system and its $CO_2$ emissions. 
+Thus, estimate the marginal emission factor in electricity markets is crucial for performing the same level of activities without emitting any greenhouse gases or reducing them to a minimum. 
+The impact of $CO_2$ emissions is studied in several empirical analysis for different markets using various methods.
+
+[//]: # "WHAT'S THE PROBLEM?"
+
+Despite the extensive literature, quantifying the change in emissions for any activity is more complicated than it might first appear.
+The lack of consensus about which metric we should use for measuring the $CO_2$ impact is likely the more important issue because depending on the metric used agent markets would make a decision.
+
+If the goal is to achieve a low-carbon economy we must ensure that the electricity used comes from locations and times with low marginal emission rates.
+
+# Literature review
+
+Within literature, Different studies have tried to estimate and predict the Carbon Emission Factor (CEF).
+Depending on the approach, three CEF types can be identifies; the Marginal Emission Factor (MEF), the Average Emission Factor (AEF), and the Mix Emission Factor (XEF).
+The MEF is an approach that asses the changes on carbon emissions of electricity system due to variations in the consumption. 
+In markets where marginal pricing model is used the power plants are sorted according their marginal costs to keep costs as low as possible.
+Then, a load increase or reduction implies a variation in the power output of the marginal power plant.
+The AEF is the total system emissions divided by the total generation over a certain period. 
+It is usually used to calculate the emissions of the replaced electricity generation [@He2021].
+Finally, the XEF allows us to assess the $CO_2$ emissions of energy consumers; In this case the average carbon intensity of the entire generation system is attributed to each customer.
+In a seminal paper, @Hawkes2010 estimated the change in system load and system $CO_2$, and compute the average MEF for the electricity system in Great Britain by the slope of the regression line. 
+The main advantage of this methodology is to take into account the strict merit-order rules. 
+Based in this idea different approaches can be made for different electricity systems. 
+For example, @Pean2018 include the renewable energy sources to estimate a MEF that take into account fluctuations associated with renewables.   
+In the last year, the availability of data for different sector has motivated several academics to propose models that estimate the hourly XEF's. 
+Authors as  @Summerbell2017, @Kopsakangas2017, and Khan2018 focus on the demand side to propose  models that quantify the emission factors for industry sectors, households or countries. 
+The results are interesting for the demand-side because consumers can be informed about their impact on carbon emissions. 
+It permits that costumers identify the best moment for using the electricity grid. 
+Therefore, consumers could benefit by saving costs and reducing their carbon emissions.
+Although the aforementioned models provide valuable information, they neglect the interconnections in electricity systems. 
+@Tranberg2019, close this gap proposing a model for 27 European countries. 
+For each country, they track the power flow on the transmission network and estimate the carbon emissions of a region and the emissions due to imports. 
+The result suggests that not taking into account the interconnections between regions could lead to underestimate XEFs.
+
+# Data and Methodology
+
+```{r, 15minData}
+#| echo: false
+#| include: false
+
+`15_min`<-c(temp_Gen[1],#DE-LU
+            temp_Gen[4]) #NTL 
+
+`15_min` <- lapply(`15_min`, fread) #fread is the equivalent to read.delim but more efficient.
+
+List_countries_15min<- Harmonize("2021-01-01 00:00:01", "2021-12-31 23:45:01", 
+                                 900, 2, `15_min`) #900 = 15 min *60 sec, 2=number of countries
+
+
+```
+
+```{r, GenData}
+#| echo: false
+#| include: false
+
+New_temp_Gen<-temp_Gen[-c(1,4)]
+
+New_temp_Gen<- lapply(New_temp_Gen, fread) #fread is the equivalent to read.delim but more efficient.
+
+List_countries<- Harmonize("2021-01-01 00:00:01", "2021-12-31 23:45:01", 
+                                 3600, 3, New_temp_Gen) #900 = 15 min *60 sec
+
+Generation<-rbind(List_countries, List_countries_15min)%>%
+  ungroup()%>%
+  mutate(Total_Gen=select(.,!c(Area, Day, Hour))%>%
+           rowSums(na.rm=T))%>%
+  rename(Date=Day)
+
+
+Share_Generation<-{ #Create an environment where i will manipulate my data and functions
+  
+  Total_Generation<-Generation%>%
+    select(!c(1:3, 25))
+  
+  #Step 1: Create the function that recognize the patterns for each energy source
+  
+  Fossil_generation<-str_subset(names(Total_Generation), pattern = "^Fossil")%>% 
+    str_c("`", . ,"`", collapse = "+" ) %>% 
+    rlang::parse_expr(.)
+  
+  Hydro_generation<-str_subset(names(Total_Generation), pattern = "^Hydro")%>%
+    str_c("`", . ,"`", collapse = "+" ) %>% #suma todas las columnas que tenga "hydro
+    rlang::parse_expr(.)
+  
+  Wind_generation<-str_subset(names(Total_Generation), pattern = "^Wind")%>%
+    str_c("`", . ,"`", collapse = "+" ) %>% 
+    rlang::parse_expr(.)
+  
+  Nuclear_generation<-str_subset(names(Total_Generation), pattern = "^Nuclear")%>%
+    str_c("`", . ,"`", collapse = "+" ) %>% 
+    rlang::parse_expr(.)
+  
+  Solar_generation<-str_subset(names(Total_Generation), pattern = "^Solar")%>%
+    str_c("`", . ,"`", collapse = "+" ) %>% 
+    rlang::parse_expr(.)
+  
+  Other_generation<-str_subset(names(Total_Generation), pattern = "^Fossil|^Hydro|^Wind|^Nuclear|^Solar", negate = T)%>%
+    str_c("`", . ,"`", collapse = "+" ) %>% 
+    rlang::parse_expr(.)
+  
+  #Step 2: Manipulate the data using the bang-bang operator for forcing my functions into a single object
+   Total_Generation %>% mutate(G_Fossil=!!Fossil_generation,
+                         G_Hydro=!!Hydro_generation,
+                         G_Wind=!!Wind_generation,
+                         G_Nuclear=!!Nuclear_generation,
+                         G_Solar=!!Solar_generation,
+                         G_Others=!!Other_generation
+                         )%>%
+    select(starts_with("G_"))
+
+                         
+                         
+}
+
+Share_Generation<-cbind(Generation[,1:3], Share_Generation, Generation[,25])%>%
+  mutate(S_Fossil=G_Fossil/Total_Gen,
+         S_Hydro=G_Hydro/Total_Gen,
+         S_Wind=G_Wind/Total_Gen,
+         S_Nuclear=G_Nuclear/Total_Gen,
+         S_Solar=G_Solar/Total_Gen,
+         S_Others=G_Others/Total_Gen)%>%
+  select(!starts_with("G_"))%>%
+  group_by(Area, Date, Hour)%>%
+  mutate(across(is.numeric, ~.^2,.names = "Pow_{col}"))
+
+rm(New_temp_Gen)
+rm(List_countries)
+rm(List_countries_15min)
+```
+
+```{r, MEF}
+
+MEF<-Generation%>%
+  ungroup()%>%
+  mutate(G_Biomass= SumCols(., "Bio")*IPCC$Biomass,
+         G_Fossil_Oil=SumCols(., "Fossil oil")*IPCC$Oil,
+         G_Fossil_Gas=SumCols(., "Fossil Gas")*IPCC$Gas,
+         G_Geothermal=SumCols(., "Geothermal")*IPCC$Geothermal,
+         G_Hydro=SumCols(., "Hydro")*IPCC$Hydropower,
+         G_Nuclear=SumCols(., "Nuclear")*IPCC$Nuclear,
+         G_Wind=SumCols(.,"Wind2")*IPCC$Wind,
+         G_Solar=SumCols(.,"Solar")*IPCC$Solar,
+         G_Waste=SumCols(., "Waste")*IPCC$Coal,
+         G_ORenewables=SumCols(.,"Other ren")*IPCC$Ave_Ren)%>%
+  group_by(Area, Date, Hour)%>%
+  select(starts_with("G_"))
+
+MEF<-cbind(MEF,
+           "G_Fossil_Coal"=rowSums(Generation[,c(5,6,8)])*IPCC$Coal)%>%
+  ungroup()%>%
+  mutate(Total_MEF=SumCols(.,"G_"))
+
+``` 
+
+```{r, Load_15_min}
+
+Load_15_min<-c(temp_Load[1], #DE-LU
+               temp_Load[4]) #NTL
+
+Load_15_min<-lapply(Load_15_min, fread)
+names(Load_15_min)<-c( "BZN|DE-LU", "BZN|NL")
+
+Load_15_min<- map(Load_15_min, ~mutate_all(., as.numeric))%>% 
+  enframe %>% # convert list to tibble
+  unnest(value)%>%
+  mutate(Day_ahead_Load= SumCols(., "Day"),
+         Actual_Load=SumCols(., "Actual")
+         )%>%
+  select(name, #Day_ahead_Load, 
+         Actual_Load)%>%
+  group_by(name)%>%
+  mutate(Time= seq(
+    from=as.POSIXct("2021-01-01 00:00", tz="UTC"),
+    to=as.POSIXct("2021-12-31 23:45", tz="UTC"),
+    by="15 min"),
+    Date=date(Time), 
+    Hour= hour(Time),
+    Area=name)%>%
+  group_by(Area, Date, Hour)%>%
+  summarise(Load=mean(Actual_Load), .groups = "keep")
+
+
+```
+
+```{r, Load_60min}
+
+New_Load<-temp_Load[-c(1,4)]
+New_Load<-lapply(New_Load, fread)
+
+names(New_Load)<-c( "BZN|FR", "BZN|IT-North", "BZN|ES")
+
+New_Load<- map(New_Load, ~mutate_all(., as.numeric))%>% 
+  enframe %>% # convert list to tibble
+  unnest(value)%>%
+  mutate(Day_ahead_Load= SumCols(., "Day"),
+         Load=SumCols(., "Actual")
+         )%>%
+  select(name, #Day_ahead_Load, 
+         Load)%>%
+  group_by(name)%>%
+  mutate(Time= seq(
+    from=as.POSIXct("2021-01-01 00:00", tz="UTC"),
+    to=as.POSIXct("2021-12-31 23:45", tz="UTC"),
+    by="60 min"),
+    Date=date(Time), 
+    Hour= hour(Time),
+    Area=name)%>%
+  ungroup()%>%
+  select(Area, Date, Hour, Load)
+
+Load<-rbind(Load_15_min, New_Load)
+
+rm(Load_15_min)
+rm(New_Load)
+```
+
+The present work calculate the MEF for France(FR), Spain(ES), Netherlands(NL) , Italy North(IT-N), and Deutsche-Luxembourg(DE-LU) using hourly data from 01-01-2021 to 31-12-2021.   
+
+- Firstly, the MEF is calculated using the hourly data of the energy mix and the $CO_{2}$ factor emission. 
+- Secondly, the changes in the load for each country are estimated.
+- Finally, the share of electricity generation by source is estimated.
+
+```{r, Delta_MEFVSLOAD}
+
+Base<-Load%>%
+  right_join(MEF, by=c("Area", "Date", "Hour"))%>%
+    right_join(Share_Generation, by=c("Area", "Date", "Hour"))%>%
+  group_by(Area)%>%
+  mutate(Month=month(Date),
+           Delta_MEF=Total_MEF-lag(Total_MEF),
+         Delta_Load=Load-lag(Load))%>%
+  mutate(TUP_LOAD= mean(Delta_Load, na.rm=TRUE) + 3*sd(Delta_Load, na.rm = T),#Correcting outliers
+         TDw_LOAD= mean(Delta_Load, na.rm=TRUE) - 3*sd(Delta_Load, na.rm = T),
+         TUP_MEF=mean(Delta_MEF, na.rm=TRUE) + 3*sd(Delta_MEF, na.rm = T),
+         TDW_MEF=mean(Delta_MEF, na.rm=TRUE) - 3*sd(Delta_MEF, na.rm = T))%>%
+  mutate(Delta_Load=ifelse(Delta_Load>TUP_LOAD, median(Delta_Load),
+                           ifelse(Delta_Load<TDw_LOAD, median(Delta_Load), Delta_Load)),
+         Delta_MEF=ifelse(Delta_MEF>TUP_MEF, median(Delta_MEF),
+                           ifelse(Delta_MEF<TDW_MEF, median(Delta_MEF), Delta_MEF)))%>%
+  dplyr::select(!c("TUP_LOAD","TDw_LOAD","TUP_MEF","TDW_MEF"))%>%
+  drop_na()
+
+```
+
+Include information related to load and generation should permit to control the demand and supply side.
+Additionally, a quadratic term is included because the relationship between $\Delta MEF$ and the share of electricity generation could be explained as an inverted U-shaped.
+However, It is necessary include a variable that takes into account the interactions between load and generation. As we know, not all changes in generation are due to a change in the load. 
+For example, the variations in renewable generation could be associated with changes in the weather. 
+To try to include these interactions the following model could be used.
+
+$$\Delta MEF= \beta_{0} + \beta_{1} \frac{Generation_{i}}{Total Generation} + \beta_{2}\left( \frac{Generation_{i}}{Total Generation} \right)^2 + \beta{3} \Delta Load + \beta_{4} \Delta Load*\frac{Generation_{i}}{Total Generation}$$
+
+
+Where, $i$ represents the different generation sources. The following plot shows the quadratic model of the MEF in function of the fossil share and the variations in load and the average MEF for each country.
+
+```{r, MODEL_Int}
+
+#|include = false
+Interaction_model<-function(df){
+  Model<-lm(Delta_MEF ~ S_Fossil + Pow_S_Fossil + Delta_Load + Delta_Load*S_Fossil, data = df)
+  Pred<-predict(Model)
+  return(Pred)
+}
+
+Model2<-Base%>%
+  group_by(Area)%>%
+  nest()%>%
+  mutate(Pred=map(data, Interaction_model))%>%
+  unnest(data, Pred)
+
+PlotM2<-Model2%>%
+  ggplot(., aes(x=Delta_Load, y=Pred))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  labs(x="Load Variation", y="MEF [tonCO2/MWh]" )+
+  facet_wrap(~Area, scales = "free_y")+
+  ggtitle("MEF based on quadratic effect and interactions")+
+  theme(legend.position = "bottom")
+
+```
+
+```{r, PLOT}
+PlotM2
+```
+```{r}
+Slopes<-function(df){
+  Model<-lm(Pred ~  Delta_Load, data = df)
+  Coefs<-coef(Model)[2]
+  return(Coefs)
+}
+
+SloM2<-Model2 %>%
+  group_by(Area)%>%
+  nest()%>%
+  mutate(`Average MEF (tonCO2/MWh)`=map(data, Slopes))%>%
+  unnest(`Average MEF (tonCO2/MWh)`)%>%
+  select(!data)
+
+```
+```{r}
+kable(SloM2)
+
+```
+
+Marginal emission factors need a consistent metric because they are essential for assessing avoided emissions. 
+The results obtained with this model show  the diversity of the composition of the electricity sector. 
+Countries with a high fossil penetration, like Netherlands, have the highest MEF; countries like France or Spain, on the contrary side, have lower MEF's.
+The methodology proposed could be used for estimating seasonal MEF's, because depending on the season of the year the electricity mix varies.
+Finally, this model could be also used for estimating the MEF that vary by location and time of the day. 
+The basic approach would be regress hourly MEF on the explanatory variables for subsets of different countries. 
+This level  of aggregation could take into account the share of electricity generation within interconnected electricity markets and the shifting load
+proﬁles throughout the day.
+
+
+
+
+# References
